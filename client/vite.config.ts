@@ -8,5 +8,12 @@ export default defineConfig({
 		watch: {
 			usePolling: true,
 		},
+		proxy: {
+			'/register_event': {
+				target: 'http://localhost:8080',
+				changeOrigin: true,
+				secure: false,
+			},
+		},
 	},
 });
