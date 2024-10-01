@@ -31,7 +31,7 @@ const AddInvitee = () => {
 
 	const [data, setData] = useState<IInvitee[]>([]);
 	const [events, setEvents] = useState<IEvent[]>([]);
-	const [inviteeIds, setInviteeIds] = useState<string[]>([]);
+	// const [inviteeIds, setInviteeIds] = useState<string[]>([]);
 	const [selectedEvent, setSelectedEvent] = useState('');
 
 	useEffect(() => {
@@ -55,10 +55,13 @@ const AddInvitee = () => {
 
 	const handleAddInvitee = (newInvitee: IInvitee) => {
 		setData((prevData) => [...prevData, newInvitee]);
-		if (newInvitee.invitee_id) {
-			setInviteeIds((prevData) => [...prevData, newInvitee.invitee_id!]);
-		}
+
+		// if (newInvitee.invitee_id) {
+		// 	setInviteeIds((prevData) => [...prevData, newInvitee.invitee_id!]);
+		// }
 	};
+
+	console.log(data);
 
 	const handleDeleteInvitee = (rowIndex: number) => {
 		setData((prevData) => prevData.filter((_, index) => index !== rowIndex));
@@ -97,9 +100,9 @@ const AddInvitee = () => {
 					const invitee_id = info.row.original.invitee_id;
 					try {
 						// const response =
-						await Api.delete('/delete-invitee', {
-							data: { invitee_id: invitee_id },
-						});
+						// await Api.delete('/delete-invitee', {
+						// 	data: { invitee_id: invitee_id },
+						// });
 						// console.log(response.data);
 						showToast({
 							//title: 'New Event created.',
@@ -108,7 +111,7 @@ const AddInvitee = () => {
 							duration: 5000,
 						});
 						setData((prevData: IInvitee[]) => prevData.filter((invitee: IInvitee) => invitee.invitee_id !== invitee_id));
-						setInviteeIds((prevData: string[]) => prevData.filter((inviteeId: string) => inviteeId !== invitee_id));
+						// setInviteeIds((prevData: string[]) => prevData.filter((inviteeId: string) => inviteeId !== invitee_id));
 					} catch (error) {
 						// console.error('There was an error deleting the invitee!', error);
 						showToast({
@@ -129,18 +132,31 @@ const AddInvitee = () => {
 
 	const handleLinkToEvent = async () => {
 		// console.log(inviteeIds);
-		const query = {
-			event_id: selectedEvent,
-			invitees: inviteeIds,
-		};
 
 		try {
-			//const response =
-			await Api.post('add-event-invitees', query, {
-				headers: {
-					'Content-Type': 'application/json',
-				},
-			});
+			// Loop through the invitee IDs array
+			for (const invitee of data) {
+				const formData = new FormData();
+
+				// Append event and invitee details to the form data
+				formData.append('event_id', selectedEvent);
+				formData.append('invitee_id', invitee.invitee_id!);
+				formData.append('name', invitee.name);
+				formData.append('phone_number', invitee.phone_number);
+				formData.append('photo', invitee.photoFile!);
+
+				// Assuming invitee.photo contains the File object for the invitee's photo
+				// if (invitee.photo) {
+				// 	formData.append('photo', invitee.photo); // 'photo' key to match backend API
+				// }
+
+				// Make API request for each invitee
+				await Api.post('add-invitee', formData, {
+					headers: {
+						'Content-Type': 'multipart/form-data',
+					},
+				});
+			}
 			// console.log(response.data);
 			showToast({
 				title: 'Invitees Added',

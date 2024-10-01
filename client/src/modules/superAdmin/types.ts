@@ -4,6 +4,7 @@ export type IEventForm = {
 	end_time: string;
 	location: string;
 	event_date: string;
+	threshold: string;
 };
 
 export interface IEvent extends IEventForm {
@@ -16,6 +17,11 @@ export type IInvitee = {
 	name: string;
 	invitee_id?: string;
 	phone_number: string;
+	timestamps?: {
+		arrivals: string[];
+		departures: string[];
+	};
+	isAttended?: boolean | null;
 };
 
 export type IEventInvitees = {
@@ -30,8 +36,13 @@ export interface IAttendee {
 	phone_number: string;
 }
 
+// export interface IAttendeeLog {
+// 	log_id: string;
+// 	timestamp: string;
+// 	action: 'enter' | 'leave';
+// }
+
 export interface IAttendeeLog {
-	log_id: string;
-	timestamp: string;
-	action: 'enter' | 'leave';
+	arrivals: string[];
+	departures: string[];
 }

@@ -24,7 +24,7 @@ const EventPage = () => {
 	useEffect(() => {
 		const fetchInvitees = async () => {
 			try {
-				const response = await Api.get(`get-event-invitees/${id}`);
+				const response = await Api.get(`get-invitees/${id}`);
 				setInvitees(response.data.invitees);
 				setEventName(response.data.event_name);
 			} catch (error) {
@@ -50,7 +50,7 @@ const EventPage = () => {
 		if (selectedInviteeId) {
 			try {
 				// const response =
-				await Api.delete('delete-event-invitee', {
+				await Api.delete('delete-invitee', {
 					data: { invitee_id: selectedInviteeId },
 				});
 				// console.log(response.data);
@@ -86,7 +86,7 @@ const EventPage = () => {
 		columnHelper.accessor('photo', {
 			header: () => 'Picture',
 			cell: (info) => {
-				return <Avatar size="sm" src={`http://localhost:8080/uploads/${info.getValue()}`} />;
+				return <Avatar size="sm" src={`http://localhost:5000/uploads/${id}/${info.getValue()}`} />;
 			},
 		}),
 		columnHelper.accessor('name', {

@@ -1,17 +1,21 @@
-import { Avatar, Box, HStack, Select, VStack, useDisclosure } from '@chakra-ui/react';
+import { Avatar, Box, Button, HStack, Heading, Icon, Select, VStack, useDisclosure } from '@chakra-ui/react';
 import CustomTable from '../../reusables/CustomTable';
 import NavCrumbBar from '../../reusables/NavCrumbBar';
 import { superAdminPaths } from '../../routes/paths';
 import { useEffect, useState } from 'react';
-import { IEvent, IAttendee, IAttendeeLog } from './types';
+import { IEvent, IAttendeeLog, IInvitee } from './types';
 import { useSelector } from 'react-redux';
 import { selectOrganisation } from '../../features/organisation/organisationSlice';
 import Api from '../../api';
 import useCustomToast from '../../hooks/useCustomToast';
 import { createColumnHelper } from '@tanstack/react-table';
 import AttendeeLog from './components/AttendeeLog';
+import { PiDotsThreeOutlineFill } from 'react-icons/pi';
+import { FaCircleCheck } from 'react-icons/fa6';
+import { FaTimesCircle } from 'react-icons/fa';
+import { FiDownload } from 'react-icons/fi';
 
-const columnHelper = createColumnHelper<IAttendee>();
+const columnHelper = createColumnHelper<IInvitee>();
 
 const AttendanceLogs = () => {
 	const showToast = useCustomToast();
@@ -19,11 +23,12 @@ const AttendanceLogs = () => {
 	const organisation = useSelector(selectOrganisation);
 
 	const [events, setEvents] = useState<IEvent[]>([]);
-	const [attendees, setAttendees] = useState<IAttendee[]>([]);
+	const [attendees, setAttendees] = useState<IInvitee[]>([]);
 	const [selectedEvent, setSelectedEvent] = useState('');
 	const [selectedEventName, setSelectedEventName] = useState('');
-	const [selectedAttendee, setSelectedAttendee] = useState<IAttendee | null>(null);
-	const [logs, setLogs] = useState<IAttendeeLog[]>([]);
+	const [selectedAttendee, setSelectedAttendee] = useState<IInvitee | null>(null);
+	const [logs, setLogs] = useState<IAttendeeLog>({ arrivals: [], departures: [] });
+	const [eventStartDateTime, setEventStartDateTime] = useState(new Date());
 
 	useEffect(() => {
 		const fetchEvents = async () => {
@@ -48,9 +53,11 @@ const AttendanceLogs = () => {
 		if (selectedEvent) {
 			const fetchAttendees = async () => {
 				try {
-					const response = await Api.get(`get-event-attendees/${selectedEvent}`);
+					const response = await Api.get(`get-attendees/${selectedEvent}`);
+					console.log(response.data);
 					setAttendees(response.data.attendees);
 					setSelectedEventName(response.data.event_name);
+					setEventStartDateTime(new Date(`${response.data.event_date}T${response.data.event_start_time}`));
 				} catch (error) {
 					console.error('Error fetching attendees:', error);
 				}
@@ -80,14 +87,14 @@ const AttendanceLogs = () => {
 		columnHelper.accessor('photo', {
 			header: () => 'Picture',
 			cell: (info) => {
-				return <Avatar size="sm" src={`http://localhost:8080/uploads/${info.getValue()}`} />;
+				return <Avatar size="sm" src={`http://localhost:5000/uploads/${selectedEvent}/${info.getValue()}`} />;
 			},
 		}),
 		columnHelper.accessor('name', {
 			header: () => 'Name',
 			cell: (info) => info.getValue(),
 		}),
-		columnHelper.accessor('attendee_id', {
+		columnHelper.accessor('invitee_id', {
 			cell: (info) => info.getValue(),
 			header: () => 'UID',
 		}),
@@ -95,15 +102,60 @@ const AttendanceLogs = () => {
 			header: () => 'Phone Number',
 			cell: (info) => info.renderValue(),
 		}),
+		columnHelper.accessor('isAttended', {
+			header: () => 'Attended',
+			cell: (info) => {
+				const attended = info.getValue();
+				return attended === null ? (
+					<Icon as={PiDotsThreeOutlineFill} color="brand.primary" w={6} h={6} /> // Three dots icon to signify loading
+				) : attended ? (
+					<Icon as={FaCircleCheck} color="green.500" w={6} h={6} /> // Checkmark if attended more than 30 minutes
+				) : (
+					<Icon as={FaTimesCircle} color="red.500" w={6} h={6} /> // Red cross if attended less than 30 minutes
+				);
+			},
+		}),
 	];
 
-	const handleRowClick = async (attendee: IAttendee) => {
+	const handleRowClick = async (attendee: IInvitee) => {
 		setSelectedAttendee(attendee);
-		onOpen();
 
-		const response = await Api.get(`/get-attendance-logs/${attendee.attendee_id}`);
-		setLogs(response.data);
+		if (attendee.timestamps != null) {
+			setLogs(attendee.timestamps);
+		}
+
+		onOpen();
 	};
+
+	const handleDownload = async () => {
+		try {
+			// Specify response type as 'blob' in Axios request
+			const response = await Api.get(`/download-attendance-logs/${selectedEvent}`, {
+				responseType: 'blob',
+			});
+
+			// Create a blob from the response data
+			const url = window.URL.createObjectURL(new Blob([response.data]));
+			const link = document.createElement('a');
+			link.href = url;
+			link.setAttribute('download', `${selectedEvent}_attendance.xlsx`);
+
+			// Append link to body, trigger the download, and remove the link
+			document.body.appendChild(link);
+			link.click();
+			link.remove();
+		} catch (error) {
+			showToast({
+				title: 'Error Occurred.',
+				description: 'Error downloading attendance log.',
+				status: 'error',
+				duration: 5000,
+			});
+		}
+	};
+
+	const showTableTime = new Date(eventStartDateTime);
+	showTableTime.setMinutes(showTableTime.getMinutes() - 30);
 
 	return (
 		<>
@@ -119,21 +171,41 @@ const AttendanceLogs = () => {
 							))}
 						</Select>
 					</Box>
+					<Button rightIcon={<FiDownload />} onClick={handleDownload} display="flex" alignItems={'center'}>
+						Download
+					</Button>
 				</HStack>
-				<CustomTable
-					data={attendees}
-					columns={columns}
-					clickableRows={true}
-					onRowClick={handleRowClick}
-					placeholderText="Search Attendee"
-					width="100%"
-				/>
+				{selectedEvent ? (
+					new Date() < showTableTime ? (
+						<Heading as={'h3'} fontSize="3xl" fontWeight="medium">
+							Event has not started yet.
+						</Heading>
+					) : (
+						<CustomTable
+							data={attendees}
+							columns={columns}
+							clickableRows={true}
+							onRowClick={handleRowClick}
+							placeholderText="Search Attendee"
+							width="100%"
+						/>
+					)
+				) : (
+					<CustomTable
+						data={[]}
+						columns={columns}
+						clickableRows={true}
+						onRowClick={handleRowClick}
+						placeholderText="Search Attendee"
+						width="100%"
+					/>
+				)}
 			</VStack>
 
 			{selectedAttendee && (
 				<AttendeeLog
 					name={selectedAttendee.name}
-					picture={selectedAttendee.photo}
+					picture={`http://localhost:5000/uploads/${selectedEvent}/${selectedAttendee.photo}`}
 					isOpen={isOpen}
 					onClose={onClose}
 					logs={logs}

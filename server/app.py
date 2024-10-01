@@ -1,28 +1,32 @@
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, send_file
 from flask_cors import CORS
 from flask_mysqldb import MySQL
-from datetime import datetime
+from datetime import datetime, timedelta, time
 from werkzeug.utils import secure_filename
 import os
 import uuid
 import string
 import random
 from werkzeug.security import generate_password_hash, check_password_hash
+import shutil
+import json
+import pandas as pd
+from io import BytesIO
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 
-app.config['MYSQL_HOST'] = 'localhost'
+app.config['MYSQL_HOST'] = 'db'
 app.config['MYSQL_USER'] = 'root'
 app.config['MYSQL_PASSWORD'] = 'pass@word'
-app.config['MYSQL_DB'] = 'attendance_app'
+app.config['MYSQL_DB'] = 'attendit_db'
 
 mysql = MySQL(app)
 
 # Configuring the upload folder
 app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['UPLOAD_FOLDER_URL'] = 'http://localhost:8080/uploads'  # Update with your domain and port
+app.config['UPLOAD_FOLDER_URL'] = 'http://localhost:5000/uploads'  # Update with your domain and port
 
 if not os.path.exists(app.config['UPLOAD_FOLDER']):
 	os.makedirs(app.config['UPLOAD_FOLDER'])
@@ -31,9 +35,18 @@ def generate_unique_id(length=12):
 	characters = string.ascii_letters + string.digits
 	return ''.join(random.choice(characters) for _ in range(length))
 
-@app.route('/uploads/<filename>')
-def uploaded_file(filename):
-	return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+# Serve files from the event-specific folder
+@app.route('/uploads/<event_id>/<path:filename>')
+def uploaded_file(event_id, filename):
+	# Construct the path to the event folder
+	event_folder = os.path.join(app.config['UPLOAD_FOLDER'], event_id)
+	
+	# Check if the event folder exists
+	if not os.path.exists(event_folder):
+		return abort(404, description="Event folder not found")
+	
+	# Serve the file from the event folder
+	return send_from_directory(event_folder, filename)
 
 @app.route('/signup', methods=['POST'])
 def signup():
@@ -46,7 +59,7 @@ def signup():
 		cursor = mysql.connection.cursor()
 
 		# Check if email already exists
-		cursor.execute('SELECT * FROM Organisations WHERE email = %s', (email,))
+		cursor.execute('SELECT * FROM organisations WHERE email = %s', (email,))
 		existing_user = cursor.fetchone()
 		if existing_user:
 			cursor.close()
@@ -60,7 +73,7 @@ def signup():
 
 		# Insert the new organization into the database
 		cursor.execute('''
-			INSERT INTO Organisations (id, name, email, password)
+			INSERT INTO organisations (id, name, email, password)
 			VALUES (%s, %s, %s, %s)
 		''', (unique_id, name, email, hashed_password))
 		mysql.connection.commit()
@@ -82,7 +95,7 @@ def signin():
 		cursor = mysql.connection.cursor()
 
 		# Check if email exists
-		cursor.execute('SELECT * FROM Organisations WHERE email = %s', (email,))
+		cursor.execute('SELECT * FROM organisations WHERE email = %s', (email,))
 		user = cursor.fetchone()
 
 		if not user:
@@ -116,7 +129,7 @@ def register_event():
 		cursor = mysql.connection.cursor()
 
 		# Check if organisation exists
-		cursor.execute('SELECT * FROM Organisations WHERE id = %s', (organisation_id,))
+		cursor.execute('SELECT * FROM organisations WHERE id = %s', (organisation_id,))
 		organisation = cursor.fetchone()
 		if not organisation:
 			cursor.close()
@@ -125,7 +138,7 @@ def register_event():
 		event_id = generate_unique_id()
 
 		cursor.execute('''
-			INSERT INTO Events (event_id, event_name, event_date, start_time, end_time, location, organisation_id)
+			INSERT INTO events (event_id, event_name, event_date, start_time, end_time, location, organisation_id)
 			VALUES (%s, %s, %s, %s, %s, %s, %s)
 		''', (event_id, event_name, event_date, start_time, end_time, location, organisation_id))
 		mysql.connection.commit()
@@ -141,7 +154,7 @@ def register_event():
 def get_events(organisation_id):
 	try:
 		cursor = mysql.connection.cursor()
-		cursor.execute('SELECT * FROM Events WHERE organisation_id = %s', (organisation_id,))
+		cursor.execute('SELECT * FROM events WHERE organisation_id = %s', (organisation_id,))
 		events = cursor.fetchall()
 		cursor.close()
 
@@ -164,99 +177,135 @@ def get_events(organisation_id):
 		print(e)
 		return jsonify({'error': str(e)}), 500
 	
-
 @app.route('/delete-event', methods=['DELETE'])
 def delete_event():
-	try:
-		data = request.json
-		event_id = data['event_id']
-		
-		cursor = mysql.connection.cursor()
-		
-		# Get all invitee_ids associated with the event
-		cursor.execute('SELECT invitee_id FROM EventInvitees WHERE event_id = %s', (event_id,))
-		invitees = cursor.fetchall()
-		
-		# Delete associated records from EventInvitees
-		cursor.execute('DELETE FROM EventInvitees WHERE event_id = %s', (event_id,))
-		
-		# Delete invitees who are only linked to this event
-		for invitee in invitees:
-				invitee_id = invitee[0]
-				cursor.execute('SELECT COUNT(*) FROM EventInvitees WHERE invitee_id = %s', (invitee_id,))
-				count = cursor.fetchone()[0]
-				if count == 0:
-						cursor.execute('DELETE FROM Invitees WHERE invitee_id = %s', (invitee_id,))
-		
-		# Delete the event
-		cursor.execute('DELETE FROM Events WHERE event_id = %s', (event_id,))
-		
-		mysql.connection.commit()
-		cursor.close()
-		
-		return jsonify({'message': 'Event and associated invitees deleted successfully'}), 200
-    
-	except Exception as e:
-		print(e)
-		return jsonify({'error': str(e)}), 500
+    try:
+        # Get the event_id from the request data
+        data = request.json
+        event_id = data.get('event_id')
+
+        if not event_id:
+            return jsonify({'error': 'Event ID is required'}), 400
+
+        cursor = mysql.connection.cursor()
+
+        # Check if the event exists
+        cursor.execute('SELECT * FROM events WHERE event_id = %s', (event_id,))
+        event = cursor.fetchone()
+        if event is None:
+            cursor.close()
+            return jsonify({'error': 'Event not found'}), 404
+
+        # Get all invitee_ids associated with the event
+        cursor.execute('SELECT invitee_id, photo FROM invitees WHERE event_id = %s', (event_id,))
+        invitees = cursor.fetchall()
+
+        # Delete associated records from Invitees table
+        cursor.execute('DELETE FROM invitees WHERE event_id = %s', (event_id,))
+
+        # Remove associated photos for each invitee
+        event_folder = os.path.join(app.config['UPLOAD_FOLDER'], event_id)
+        if os.path.exists(event_folder):
+          shutil.rmtree(event_folder)  # Deletes the folder and its contents
+
+        # Delete the event
+        cursor.execute('DELETE FROM events WHERE event_id = %s', (event_id,))
+
+        # Commit the transaction
+        mysql.connection.commit()
+        cursor.close()
+
+        return jsonify({'message': 'Event and associated invitees deleted successfully'}), 200
+
+    except Exception as e:
+        print(e)
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/add-invitee', methods=['POST'])
 def add_invitee():
 	try:
 		# Get form data
+		event_id = request.form['event_id']
+		invitee_id = request.form['invitee_id']
 		name = request.form['name']
 		phone_number = request.form['phone_number']
-		invitee_id = request.form['invitee_id']
 		
-		# Handle file upload
-		photo = request.files.get('photo', None)
-		if photo is None:
-			return jsonify({'error': 'No photo file part'}), 400
-		
-		filename = secure_filename(photo.filename)
-		unique_filename = str(uuid.uuid4()) + "_" + filename
-		photo_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
-		photo.save(photo_path)
-
-		# Construct the URL to the uploaded image
-		photo_url = f"{app.config['UPLOAD_FOLDER']}/{unique_filename}"
-		
-		# Insert into the database
+		# Check if event exists
 		cursor = mysql.connection.cursor()
-		cursor.execute('''
-			INSERT INTO Invitees (invitee_id, name, phone_number, photo)
-			VALUES (%s, %s, %s, %s)
-		''', (invitee_id, name, phone_number, unique_filename))
-		mysql.connection.commit()
-		cursor.close()
-		print(unique_filename)
+		cursor.execute('SELECT event_id FROM events WHERE event_id = %s', (event_id,))
+		event = cursor.fetchone()
 		
-		return jsonify({'message': 'Invitee added successfully'}), 201
+		if event:
+			# Create event-specific folder for photos
+			event_folder = os.path.join(app.config['UPLOAD_FOLDER'], event_id)
+			if not os.path.exists(event_folder):
+					os.makedirs(event_folder)
+			
+			# Handle file upload for the invitee
+			photo = request.files.get('photo', None)  # Expecting a file input named 'photo'
+			if photo is None:
+					return jsonify({'error': 'No photo file part for invitee'}), 400
 
+			filename = secure_filename(photo.filename)
+			unique_filename = str(uuid.uuid4()) + "_" + filename
+			photo_path = os.path.join(event_folder, unique_filename)  # Save to event folder
+			photo.save(photo_path)
+
+			# Insert invitee data into the database
+			cursor.execute('''
+				INSERT INTO invitees (invitee_id, name, phone_number, photo, event_id)
+				VALUES (%s, %s, %s, %s, %s)
+				''', (
+					invitee_id, name, phone_number, unique_filename, event_id
+			))
+
+			mysql.connection.commit()
+			cursor.close()
+
+			return jsonify({'message': 'Invitee added successfully'}), 201
+		else:
+			cursor.close()
+			return jsonify({'error': 'Event does not exist'}), 404
+			
 	except Exception as e:
-			print(e)
-			return jsonify({'error': str(e)}), 500
+		print(e)
+		return jsonify({'error': str(e)}), 500
 
 @app.route('/delete-invitee', methods=['DELETE'])
 def delete_invitee():
 	try:
 		# Get the invitee_id from the request data
 		data = request.json
-		invitee_id = data['invitee_id']
+		invitee_id = data.get('invitee_id')
 		
+		if not invitee_id:
+			return jsonify({'error': 'Invitee ID is required'}), 400
+
 		# Check if the invitee exists
 		cursor = mysql.connection.cursor()
-		cursor.execute('SELECT * FROM Invitees WHERE invitee_id = %s', (invitee_id,))
+		cursor.execute('SELECT photo, event_id FROM invitees WHERE invitee_id = %s', (invitee_id,))
 		invitee = cursor.fetchone()
 		
 		if invitee is None:
 			cursor.close()
 			return jsonify({'error': 'Invitee not found'}), 404
 		
-		# Delete the invitee
-		cursor.execute('DELETE FROM Invitees WHERE invitee_id = %s', (invitee_id,))
+		# Fetch the photo and event folder
+		photo_filename = invitee[0]
+		event_id = invitee[1]
+
+		# Construct the path to the photo file
+		event_folder = os.path.join(app.config['UPLOAD_FOLDER'], event_id)
+		photo_path = os.path.join(event_folder, photo_filename)
+		
+		# Delete the invitee from the database
+		cursor.execute('DELETE FROM invitees WHERE invitee_id = %s', (invitee_id,))
 		mysql.connection.commit()
 		cursor.close()
+		
+		# Delete the photo from the file system (if it exists)
+		if os.path.exists(photo_path):
+			os.remove(photo_path)
 		
 		return jsonify({'message': 'Invitee deleted successfully'}), 200
 	
@@ -264,174 +313,209 @@ def delete_invitee():
 			print(e)
 			return jsonify({'error': str(e)}), 500
 
-@app.route('/add-event-invitees', methods=['POST'])
-def add_event_invitees():
-	try:
-		data = request.json
-		event_id = data['event_id']
-		invitees = data['invitees']  # This should be a list of invitee_ids
-		
-		cursor = mysql.connection.cursor()
-
-		# Check if event exists
-		cursor.execute('SELECT event_id FROM Events WHERE event_id = %s', (event_id,))
-		event = cursor.fetchone()
-		if not event:
-			return jsonify({'error': 'Event does not exist'}), 404
-
-		# Validate invitees
-		valid_invitees = []
-		for invitee_id in invitees:
-			cursor.execute('SELECT invitee_id FROM Invitees WHERE invitee_id = %s', (invitee_id,))
-			invitee = cursor.fetchone()
-			if invitee:
-				valid_invitees.append(invitee_id)
-			else:
-				return jsonify({'error': f'Invitee with ID {invitee_id} does not exist'}), 404
-
-		if not valid_invitees:
-			return jsonify({'error': 'No valid invitees found'}), 404
-
-		# Insert each valid invitee into the EventInvitees table
-		for invitee_id in valid_invitees:
-			cursor.execute('''
-				INSERT INTO EventInvitees (invitee_id, event_id)
-				VALUES (%s, %s)
-			''', (invitee_id, event_id))
-		
-		mysql.connection.commit()
-		cursor.close()
-		
-		return jsonify({'message': 'Invitees added to event successfully'}), 201
-	
-	except Exception as e:
-		print(e)
-		return jsonify({'error': str(e)}), 500
-
-@app.route('/delete-event-invitee', methods=['DELETE'])
-def delete_event_invitee():
-	try:
-		data = request.json
-		invitee_id = data['invitee_id']
-		
-		cursor = mysql.connection.cursor()
-
-		# Delete from EventInvitees first
-		cursor.execute('DELETE FROM EventInvitees WHERE invitee_id = %s', (invitee_id,))
-		
-		# Delete from Invitees
-		cursor.execute('DELETE FROM Invitees WHERE invitee_id = %s', (invitee_id,))
-		
-		mysql.connection.commit()
-		cursor.close()
-		
-		return jsonify({'message': 'Invitee deleted successfully'}), 200
-	
-	except Exception as e:
-		print(e)
-		return jsonify({'error': str(e)}), 500
-
-
-@app.route('/get-event-invitees/<event_id>', methods=['GET'])
-def get_event_invitees(event_id):
+@app.route('/get-invitees/<event_id>', methods=['GET'])
+def get_invitees(event_id):
 	try:
 		cursor = mysql.connection.cursor()
-		cursor.execute('''
-			SELECT e.event_name, i.invitee_id, i.name, i.phone_number, i.photo
-			FROM Invitees i
-			JOIN EventInvitees ea ON i.invitee_id = ea.invitee_id
-			JOIN Events e ON ea.event_id = e.event_id
-			WHERE ea.event_id = %s
-		''', (event_id,))
-		result = cursor.fetchall()
+		query = '''
+		SELECT e.event_name, i.invitee_id, i.name, i.phone_number, i.photo, i.timestamps, i.isAttended
+		FROM events e
+		JOIN invitees i ON e.event_id = i.event_id
+		WHERE e.event_id = %s
+		'''
+		cursor.execute(query, (event_id,))
+		results = cursor.fetchall()
 		cursor.close()
 
-		# Extract the event name and transform the invitees into a list of dictionaries
-		if result:
-			event_name = result[0][0]
-			invitee_list = []
-			for row in result:
-				invitee_dict = {
-					'invitee_id': row[1],
-					'name': row[2],
+		if not results:
+			return jsonify({'error': 'Event not found or no invitees'}), 404
+
+		event_name = results[0][0]
+		invitee_list = []
+		for row in results:
+			invitee_dict = {
+					'invitee_id': row[1],  
+					'name': row[2],        
 					'phone_number': row[3],
-					'photo': row[4]
-				}
-				invitee_list.append(invitee_dict)
-
-			return jsonify({'event_name': event_name, 'invitees': invitee_list}), 200
-		else:
-			return jsonify({'error': 'No invitees found for the given event_id'}), 404
-	
-	except Exception as e:
-		print(e)
-		return jsonify({'error': str(e)}), 500
-
-@app.route('/get-event-attendees/<event_id>', methods=['GET'])
-def get_event_attendees(event_id):
-	try:
-		cursor = mysql.connection.cursor()
-		cursor.execute('''
-			SELECT a.attendee_id, a.name, a.photo, a.phone_number, e.event_name
-			FROM Attendees a
-			JOIN Events e ON a.event_id = e.event_id
-			WHERE a.event_id = %s
-		''', (event_id,))
-		result = cursor.fetchall()
-		cursor.close()
-
-		# Extract the event name and transform the attendees into a list of dictionaries
-		if result:
-			event_name = result[0][4]
-			attendee_list = []
-			for row in result:
-				attendee_dict = {
-					'attendee_id': row[0],
-					'name': row[1],
-					'photo': row[2],
-					'phone_number': row[3]
-				}
-				attendee_list.append(attendee_dict)
-
-			return jsonify({'event_name': event_name, 'attendees': attendee_list}), 200
-		else:
-			return jsonify({'error': 'No attendees found for the given event_id'}), 404
-
-	except Exception as e:
-		print(e)
-		return jsonify({'error': str(e)}), 500
-
-@app.route('/get-attendance-logs/<attendee_id>', methods=['GET'])
-def get_attendance_logs(attendee_id):
-	try:
-		cursor = mysql.connection.cursor()
-		cursor.execute('''
-			SELECT l.log_id, l.event_id, e.event_name, l.timestamp, l.action
-			FROM Attendance_Logs l
-			JOIN Events e ON l.event_id = e.event_id
-			WHERE l.attendee_id = %s
-			ORDER BY l.timestamp
-		''', (attendee_id,))
-		result = cursor.fetchall()
-		cursor.close()
-
-		# Transform the logs into a list of dictionaries for easy JSON serialization
-		log_list = []
-		for row in result:
-			log_dict = {
-				'log_id': row[0],
-				'event_id': row[1],
-				'event_name': row[2],
-				'timestamp': str(row[3]),
-				'action': row[4]
+					'photo': row[4],       
+					'timestamps': row[5],  
+					'isAttended': bool(row[6]) 
 			}
-			log_list.append(log_dict)
+			invitee_list.append(invitee_dict)
 
-		return jsonify(log_list), 200
+		# Return the event_name along with the invitees
+		return jsonify({
+			'event_name': event_name,
+			'invitees': invitee_list
+		}), 200
 
 	except Exception as e:
 		print(e)
 		return jsonify({'error': str(e)}), 500
+
+@app.route('/get-attendees/<event_id>', methods=['GET'])
+def get_attendees(event_id):
+	try:
+		cursor = mysql.connection.cursor()
+		query = '''
+		SELECT e.event_name,e.event_date, e.start_time, e.end_time, e.threshold, i.invitee_id, i.name, i.phone_number, i.photo, i.timestamps, i.isAttended
+		FROM events e
+		JOIN invitees i ON e.event_id = i.event_id
+		WHERE e.event_id = %s AND i.timestamps IS NOT NULL
+		'''
+		cursor.execute(query, (event_id,))
+		results = cursor.fetchall()
+		cursor.close()
+
+		if not results:
+			# return jsonify({'error': 'Event not found or no attendees'}), 404
+			# Return an empty list of attendees for an existing event with no timestamps
+			return jsonify({
+				'event_name': '',
+				'attendees': [],
+				'event_date': '',
+				'event_end_time': '',
+				'event_start_time': ''
+			}), 200
+
+		event_name = results[0][0]
+		event_date = results[0][1]
+		event_start_time = results[0][2]  # Fetch start time from DB (time object)
+		event_end_time = results[0][3]    # Fetch end time from DB (time object)
+		event_threshold = results[0][4]   # Fetch threshold (in minutes)
+
+		total_seconds = event_end_time.total_seconds()
+		hours = int(total_seconds // 3600) % 24
+		minutes = int((total_seconds % 3600) // 60)
+		seconds = int(total_seconds % 60)
+
+		# Extract year, month, and day from event_date
+		year = event_date.year
+		month = event_date.month
+		day = event_date.day
+
+		# Create a full datetime object using year, month, day from event_date and time from event_end_time
+		event_end_datetime = datetime(year=year, month=month, day=day, hour=hours, minute=minutes, second=seconds)
+
+		# Get the current time
+		current_time = datetime.now()
+
+		attendee_list = []
+		for row in results:
+			timestamps = row[9] 
+			isAttended = row[10]  
+
+			# Only compute the attendance after the event has ended
+			if current_time > event_end_datetime:  # Compare time objects directly
+				total_duration = timedelta(0)  # Initialize total duration
+				
+				if timestamps:
+					timestamps = json.loads(timestamps)  # Parse the JSON field (arrivals and departures)
+
+					# Calculate the total time between each arrival and departure
+					for arrival_str, departure_str in zip(timestamps['arrivals'], timestamps['departures']):
+						arrival = datetime.strptime(arrival_str, '%H:%M:%S').time()
+						departure = datetime.strptime(departure_str, '%H:%M:%S').time()
+
+						# Combine time with a dummy date to calculate the duration correctly
+						arrival_datetime = datetime.combine(datetime.today(), arrival)
+						departure_datetime = datetime.combine(datetime.today(), departure)
+
+						total_duration += (departure_datetime - arrival_datetime)
+
+				# Check if total time exceeds the threshold and update attendance status
+				attended = total_duration >= timedelta(minutes=event_threshold)
+
+				if attended and not isAttended:
+					cursor = mysql.connection.cursor()
+					cursor.execute('UPDATE invitees SET isAttended = TRUE WHERE invitee_id = %s', (row[4],))
+					mysql.connection.commit()
+					cursor.close()
+
+				# Add the attendee details to the list
+				attendee_dict = {
+					'invitee_id': row[5],
+					'name': row[6],
+					'phone_number': row[7],
+					'photo': row[8],
+					'timestamps': row[9],
+					'isAttended': attended  # Send calculated isAttended status to the frontend
+				}
+			else:
+				attendee_dict = {
+					'invitee_id': row[5],
+					'name': row[6],
+					'phone_number': row[7],
+					'photo': row[8],
+					'timestamps': row[9],
+					'isAttended': None  # Indicates that attendance hasn't been computed yet
+				}
+
+			attendee_list.append(attendee_dict)
+
+		return jsonify({
+			'event_name': event_name,
+			'attendees': attendee_list,
+			'event_date': event_date.strftime('%Y-%m-%d'),
+			'event_end_time': str(event_end_time),
+			'event_start_time': str(event_start_time),
+		}), 200
+
+	except Exception as e:
+		print(e)
+		return jsonify({'error': str(e)}), 500
+
+@app.route('/download-attendance-logs/<event_id>', methods=['GET'])
+def download_attendance(event_id):
+	try:
+		cursor = mysql.connection.cursor()
+		query = '''
+		SELECT e.event_name, i.invitee_id, i.name, i.phone_number, i.photo, i.timestamps, i.isAttended
+		FROM events e
+		LEFT JOIN invitees i ON e.event_id = i.event_id
+		WHERE e.event_id = %s AND i.timestamps IS NOT NULL
+		'''
+		cursor.execute(query, (event_id,))
+		results = cursor.fetchall()
+		cursor.close()
+
+		if not results:
+			return jsonify({'error': 'No attendees with timestamps found'}), 404
+
+		# Process the results and prepare them for export
+		event_name = results[0][0]
+		attendee_list = []
+
+		# Create list of dicts to prepare the data for Excel export
+		for row in results:
+			attendee_dict = {
+				'Invitee ID': row[1],
+				'Name': row[2],
+				'Phone Number': row[3],
+				'Photo': row[4],
+				'Timestamps': row[5],
+				'Attended': bool(row[6]),
+			}
+			attendee_list.append(attendee_dict)
+
+		# Convert the list of dicts into a pandas DataFrame
+		df = pd.DataFrame(attendee_list)
+
+		# Write the DataFrame to an Excel file in memory (BytesIO)
+		output = BytesIO()
+		with pd.ExcelWriter(output, engine='openpyxl') as writer:
+			df.to_excel(writer, index=False, sheet_name='Attendance')
+
+		# Rewind the buffer
+		output.seek(0)
+
+		# Send the Excel file as a downloadable response
+		return send_file(output, as_attachment=True, download_name=f"{event_name}_attendance_logs.xlsx", mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+	except Exception as e:
+		print(e)
+		return jsonify({'error': str(e)}), 500
+	
 
 if __name__ == "__main__":
-	app.run(debug=True, port=8080)
+	app.run(debug=True,host="0.0.0.0", port=5000)

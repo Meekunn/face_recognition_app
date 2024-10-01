@@ -8,12 +8,16 @@ export default defineConfig({
 		watch: {
 			usePolling: true,
 		},
-		proxy: {
-			'/register_event': {
-				target: 'http://localhost:8080',
-				changeOrigin: true,
-				secure: false,
-			},
-		},
+		// proxy: {
+		// 	'/register_event': {
+		// 		target: 'http://localhost:5000',
+		// 		changeOrigin: true,
+		// 		secure: false,
+		// 	},
+		// },
+		port: 3000,
+		strictPort: true,
+		host: true,
+		origin: 'http://localhost:3000',
 	},
 });

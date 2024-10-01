@@ -37,6 +37,7 @@ const NewEvent = () => {
 			end_time: '',
 			location: '',
 			event_date: '',
+			threshold: '30',
 		},
 		validationSchema: Yup.object({
 			event_name: Yup.string().required('This Field is Required'),
@@ -44,6 +45,7 @@ const NewEvent = () => {
 			start_time: Yup.string().required('This Field is Required'),
 			end_time: Yup.string().required('This Field is Required'),
 			location: Yup.string().required('This Field is Required'),
+			threshold: Yup.string().required('This Field is Required'),
 		}),
 		onSubmit: async (values) => {
 			Api.post('register-event', {
@@ -52,6 +54,7 @@ const NewEvent = () => {
 				start_time: values.start_time,
 				end_time: values.end_time,
 				location: values.location,
+				threshold: parseInt(values.threshold),
 				organisation_id: organisation.id,
 			})
 				.then((response) => {
@@ -178,6 +181,24 @@ const NewEvent = () => {
 							width="100%"
 							labelSize="sm"
 							errMsg={formik.errors.end_time}
+						/>
+						<CustomInputBox
+							hasFieldset={true}
+							isRequired={true}
+							onFocusLabelColor="brand.primary"
+							onFocusBorderColor="brand.primary"
+							onBlur={formik.handleBlur}
+							onChange={formik.handleChange}
+							value={formik.values.threshold}
+							name="threshold"
+							label="Attendance Threshold (minutes)"
+							placeholder="30"
+							type="text"
+							color={'brand.textGray'}
+							fontSize="sm"
+							width="100%"
+							labelSize="sm"
+							errMsg={formik.errors.threshold}
 						/>
 						<Flex justify={{ base: 'center', md: 'flex-end' }} w="100%">
 							<Button fontWeight="semibold" type="submit">

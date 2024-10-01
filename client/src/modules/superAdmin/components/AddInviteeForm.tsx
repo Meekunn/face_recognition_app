@@ -20,7 +20,7 @@ import CustomInputBox from '../../../reusables/Input/CustomInputBox';
 import { NAME_REGEX, PHONE_REGEX } from '../../../utils/regex';
 import * as Yup from 'yup';
 import { IInvitee } from '../types';
-import Api from '../../../api';
+// import Api from '../../../api';
 import { generateUID } from '../../../utils/helperFunctions';
 import useCustomToast from '../../../hooks/useCustomToast';
 
@@ -56,21 +56,22 @@ const AddInviteeForm = ({ isOpen, onClose, onAddInvitee }: IAddInviteeForm) => {
 				values.invitee_id = generatedUID;
 			}
 
-			const formData = new FormData();
-			formData.append('name', values.name);
-			formData.append('phone_number', values.phone_number);
+			// const formData = new FormData();
+			// formData.append('name', values.name);
+			// formData.append('phone_number', values.phone_number);
 
-			if (values.photoFile) formData.append('photo', values.photoFile);
-			// console.log(values.photoFile);
-			values.invitee_id ? formData.append('invitee_id', values.invitee_id) : formData.append('invitee_id', generatedUID);
+			// if (values.photoFile) formData.append('photo', values.photoFile);
+			// // console.log(values.photoFile);
+			// values.invitee_id ? formData.append('invitee_id', values.invitee_id) : formData.append('invitee_id', generatedUID);
 
 			try {
 				// const response =
-				await Api.post('add-invitee', formData, {
-					headers: {
-						'Content-Type': 'multipart/form-data',
-					},
-				});
+				// await Api.post('add-invitee', formData, {
+				// 	headers: {
+				// 		'Content-Type': 'multipart/form-data',
+				// 	},
+				// });
+				onAddInvitee(values);
 				showToast({
 					title: 'Invitee Added',
 					description: 'Invitee added successfully',
@@ -91,7 +92,7 @@ const AddInviteeForm = ({ isOpen, onClose, onAddInvitee }: IAddInviteeForm) => {
 					position: 'top',
 				});
 			}
-			onAddInvitee(values);
+			//onAddInvitee(values);
 		},
 	});
 

@@ -2,6 +2,6 @@ node_modules
 dist
 __pycache__
 .env
-venv/
+server/venv/
 docker-compose.override.yml
 server/uploads/

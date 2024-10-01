@@ -23,12 +23,14 @@ interface IAttendeeLogModal {
 	onClose: () => void;
 	name: string;
 	picture: string;
-	logs: IAttendeeLog[];
+	logs: IAttendeeLog | string;
 }
 
 const AttendeeLog = ({ isOpen, onClose, name, picture, logs }: IAttendeeLogModal) => {
-	const enterLogs = logs.filter((log) => log.action === 'enter');
-	const leaveLogs = logs.filter((log) => log.action === 'leave');
+	const parsedLogs: IAttendeeLog = typeof logs === 'string' ? JSON.parse(logs) : logs;
+
+	const enterLogs = parsedLogs.arrivals;
+	const leaveLogs = parsedLogs.departures;
 
 	return (
 		<Modal isOpen={isOpen} onClose={onClose}>
@@ -41,7 +43,7 @@ const AttendeeLog = ({ isOpen, onClose, name, picture, logs }: IAttendeeLogModal
 				<ModalBody>
 					<VStack gap={6}>
 						<VStack alignItems="center" gap={3}>
-							<Avatar src={`http://localhost:8080/uploads/${picture}`} size={'2xl'} />
+							<Avatar src={picture} size={'2xl'} />
 						</VStack>
 						<Table variant="striped" colorScheme="customBlue">
 							<Thead>
@@ -55,19 +57,19 @@ const AttendeeLog = ({ isOpen, onClose, name, picture, logs }: IAttendeeLogModal
 								</Tr>
 							</Thead>
 							<Tbody>
-								{enterLogs.map((log, index) => (
-									<Tr key={log.log_id}>
-										<Td color="green">{log.timestamp}</Td>
+								{enterLogs.map((arrival, index) => (
+									<Tr key={index}>
+										<Td color="green">{arrival}</Td>
 										<Td color="red" textAlign="right">
-											{leaveLogs[index] ? leaveLogs[index].timestamp : ''}
+											{leaveLogs[index] ? leaveLogs[index] : ''}
 										</Td>
 									</Tr>
 								))}
 								{leaveLogs.length > enterLogs.length &&
-									leaveLogs.slice(enterLogs.length).map((log) => (
-										<Tr key={log.log_id}>
+									leaveLogs.slice(enterLogs.length).map((departure, index) => (
+										<Tr key={index}>
 											<Td color="red"></Td>
-											<Td color="red">{log.timestamp}</Td>
+											<Td color="red">{departure}</Td>
 										</Tr>
 									))}
 							</Tbody>
