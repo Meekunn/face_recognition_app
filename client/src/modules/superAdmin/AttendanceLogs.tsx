@@ -1,4 +1,4 @@
-import { Avatar, Box, Button, HStack, Heading, Icon, Select, VStack, useDisclosure } from '@chakra-ui/react';
+import { Avatar, Box, Button, HStack, Heading, Icon, Select, Text, VStack, useDisclosure } from '@chakra-ui/react';
 import CustomTable from '../../reusables/CustomTable';
 import NavCrumbBar from '../../reusables/NavCrumbBar';
 import { superAdminPaths } from '../../routes/paths';
@@ -14,6 +14,7 @@ import { PiDotsThreeOutlineFill } from 'react-icons/pi';
 import { FaCircleCheck } from 'react-icons/fa6';
 import { FaTimesCircle } from 'react-icons/fa';
 import { FiDownload } from 'react-icons/fi';
+import { padTime } from '../../utils/helperFunctions';
 
 const columnHelper = createColumnHelper<IInvitee>();
 
@@ -29,6 +30,19 @@ const AttendanceLogs = () => {
 	const [selectedAttendee, setSelectedAttendee] = useState<IInvitee | null>(null);
 	const [logs, setLogs] = useState<IAttendeeLog>({ arrivals: [], departures: [] });
 	const [eventStartDateTime, setEventStartDateTime] = useState(new Date());
+	const [eventEndDateTime, setEventEndDateTime] = useState(new Date());
+	const [startTime, setStartTime] = useState('');
+
+	const currentDateTime = new Date();
+
+	const eventStarted = new Date(eventStartDateTime);
+	eventStarted.setMinutes(eventStarted.getMinutes() - 30);
+
+	const eventEnded = new Date(eventEndDateTime);
+	eventEnded.setMinutes(eventEnded.getMinutes() + 30);
+	// console.log(currentDateTime);
+	// console.log(eventEnded);
+	// console.log(currentDateTime > eventEnded);
 
 	useEffect(() => {
 		const fetchEvents = async () => {
@@ -56,8 +70,11 @@ const AttendanceLogs = () => {
 					const response = await Api.get(`get-attendees/${selectedEvent}`);
 					console.log(response.data);
 					setAttendees(response.data.attendees);
+					setStartTime(response.data.event_start_time);
 					setSelectedEventName(response.data.event_name);
-					setEventStartDateTime(new Date(`${response.data.event_date}T${response.data.event_start_time}`));
+					console.log('date', new Date(`${response.data.event_date}T${padTime(response.data.event_start_time)}`));
+					setEventStartDateTime(new Date(`${response.data.event_date}T${padTime(response.data.event_start_time)}`));
+					setEventEndDateTime(new Date(`${response.data.event_date}T${padTime(response.data.event_end_time)}`));
 				} catch (error) {
 					console.error('Error fetching attendees:', error);
 				}
@@ -103,16 +120,32 @@ const AttendanceLogs = () => {
 			cell: (info) => info.renderValue(),
 		}),
 		columnHelper.accessor('isAttended', {
-			header: () => 'Attended',
+			header: () => {
+				// If the event is ongoing, show "Present"; otherwise show "Attended"
+				return currentDateTime > eventStarted && currentDateTime < eventEnded ? 'Present' : 'Attended';
+			},
 			cell: (info) => {
-				const attended = info.getValue();
-				return attended === null ? (
-					<Icon as={PiDotsThreeOutlineFill} color="brand.primary" w={6} h={6} /> // Three dots icon to signify loading
-				) : attended ? (
-					<Icon as={FaCircleCheck} color="green.500" w={6} h={6} /> // Checkmark if attended more than 30 minutes
-				) : (
-					<Icon as={FaTimesCircle} color="red.500" w={6} h={6} /> // Red cross if attended less than 30 minutes
-				);
+				const isAttended = info.getValue();
+				const isPresent = info.row.original.isPresent; // Assuming 'isPresent' is part of the row data
+
+				// Show 'isPresent' if the event is ongoing
+				if (currentDateTime > eventStarted && currentDateTime < eventEnded) {
+					return isPresent ? (
+						<Text color="green.500">True</Text> // Display 'True' for isPresent
+					) : (
+						<Text color="red.500">False</Text> // Display 'False' for isPresent
+					);
+				}
+				// After event ends, show 'isAttended'
+				else if (currentDateTime > eventEnded) {
+					return isAttended === null ? (
+						<Icon as={PiDotsThreeOutlineFill} color="brand.primary" w={6} h={6} /> // Three dots icon to signify loading
+					) : isAttended ? (
+						<Icon as={FaCircleCheck} color="green.500" w={6} h={6} /> // Checkmark if attended more than 30 minutes
+					) : (
+						<Icon as={FaTimesCircle} color="red.500" w={6} h={6} /> // Red cross if attended less than 30 minutes
+					);
+				}
 			},
 		}),
 	];
@@ -154,9 +187,6 @@ const AttendanceLogs = () => {
 		}
 	};
 
-	const showTableTime = new Date(eventStartDateTime);
-	showTableTime.setMinutes(showTableTime.getMinutes() - 30);
-
 	return (
 		<>
 			<NavCrumbBar crumbItems={crumbItems} />
@@ -176,7 +206,11 @@ const AttendanceLogs = () => {
 					</Button>
 				</HStack>
 				{selectedEvent ? (
-					new Date() < showTableTime ? (
+					startTime === '' ? (
+						<Heading as={'h3'} fontSize="3xl" fontWeight="medium">
+							Event has not started yet.
+						</Heading>
+					) : currentDateTime < eventStarted ? (
 						<Heading as={'h3'} fontSize="3xl" fontWeight="medium">
 							Event has not started yet.
 						</Heading>

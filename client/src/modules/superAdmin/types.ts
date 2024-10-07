@@ -22,6 +22,7 @@ export type IInvitee = {
 		departures: string[];
 	};
 	isAttended?: boolean | null;
+	isPresent?: boolean;
 };
 
 export type IEventInvitees = {

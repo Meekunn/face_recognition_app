@@ -11,3 +11,7 @@ Werkzeug==3.0.3
 pandas
 openpyxl
 mysql-connector-python
+ultralytics
+opencv-python
+deepface
+tf-keras

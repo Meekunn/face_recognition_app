@@ -12,6 +12,11 @@ import shutil
 import json
 import pandas as pd
 from io import BytesIO
+import threading
+import cv2
+from ultralytics import YOLO
+from deepface import DeepFace
+# from your_flask_app import app
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -23,6 +28,9 @@ app.config['MYSQL_PASSWORD'] = 'pass@word'
 app.config['MYSQL_DB'] = 'attendit_db'
 
 mysql = MySQL(app)
+
+# Load OpenCV Haar Cascade for face detection
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
 # Configuring the upload folder
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -48,6 +56,162 @@ def uploaded_file(event_id, filename):
 	# Serve the file from the event folder
 	return send_from_directory(event_folder, filename)
 
+def run_yolo_face_tracking_webcam(event_id, mysql, threshold_dist=0.7):
+	model = YOLO('videos/best.pt')  # Load YOLO model
+	cap = cv2.VideoCapture('videos/IMG_9215.MOV')
+
+	if not cap.isOpened():
+		print("Error: Could not open video.")
+		return
+
+	while True:
+		ret, frame = cap.read()
+		if not ret:
+			break
+
+		results = model.track(frame, persist=True)
+		if hasattr(results[0].boxes, 'id'):
+			boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
+			with app.app_context():
+				# Get invitees for the event from DB
+				cursor = mysql.connection.cursor()
+				cursor.execute('''
+					SELECT i.invitee_id, i.cropped_photo, i.timestamps
+					FROM events e
+					JOIN invitees i ON e.event_id = i.event_id
+					WHERE e.event_id = %s
+				''', (event_id,))
+				invitees = cursor.fetchall()
+				cursor.close()
+
+				# Folder where reference images for the event are stored
+				event_folder = os.path.join(app.config['UPLOAD_FOLDER'], str(event_id))
+				cropped_faces_folder = os.path.join(event_folder, 'cropped_faces')
+
+				for box in boxes:
+					cropped_image = frame[box[1]:box[3], box[0]:box[2]]
+					
+					for invitee in invitees:
+						invitee_id, reference_image , timestamps = invitee
+						# Verify face using DeepFace
+						result = DeepFace.verify(cropped_image, os.path.join(cropped_faces_folder, reference_image), model_name='Facenet512')
+
+						# If match is found based on the threshold
+						if result['distance'] < threshold_dist:
+							print('Match found')
+							# Retrieve and update timestamps
+							current_time = datetime.now().strftime('%H:%M:%S')
+
+							if timestamps:
+								timestamps_data = json.loads(timestamps)
+							else:
+								timestamps_data = {'arrivals': [], 'departures': []}
+
+							# Append the current time to the `arrivals` or `departures`
+							if len(timestamps_data['arrivals']) == len(timestamps_data['departures']):
+								timestamps_data['arrivals'].append(current_time)
+							else:
+								timestamps_data['departures'].append(current_time)
+
+							# Convert the updated timestamps back to JSON format
+							updated_timestamps = json.dumps(timestamps_data)
+
+							# Update the invitee's timestamps in the database
+							cursor = mysql.connection.cursor()
+							cursor.execute('''
+								UPDATE invitees
+								SET timestamps = %s
+								WHERE invitee_id = %s
+							''', (updated_timestamps, invitee_id))
+							mysql.connection.commit()
+							cursor.close()
+
+						elif result['distance'] > threshold_dist:
+							print('No match')
+							new_invitee_id = generate_unique_id(10)
+							unknown_filename = f"{new_invitee_id}_cropped_unknown.jpg"
+							cropped_face_path = os.path.join(cropped_faces_folder, unknown_filename)
+							cv2.imwrite(cropped_face_path, cropped_image)
+
+							current_time = datetime.now().strftime('%H:%M:%S')
+							timestamps_data = {
+								'arrivals': [current_time],
+								'departures': []
+							}
+							updated_timestamps = json.dumps(timestamps_data)
+
+							# Insert the unknown invitee into the database
+							cursor = mysql.connection.cursor()
+							cursor.execute('''
+								INSERT INTO invitees (invitee_id, name, phone_number, photo, cropped_photo, timestamps, event_id)
+								VALUES (%s, %s, %s, %s, %s, %s, %s)
+							''', (
+								new_invitee_id, 'Unknown', '00000000000', unknown_filename, unknown_filename, updated_timestamps, event_id
+							))
+							mysql.connection.commit()
+							cursor.close()
+
+		# Display and check for exit command
+		# cv2.imshow("YOLO Face Tracking", frame)
+		# if cv2.waitKey(1) & 0xFF == ord("q"):
+		# 		break
+		count = 0
+		cv2.imwrite(f"output_frame_{count}.jpg", frame)
+		count += 1
+
+	cap.release()
+	cv2.destroyAllWindows()
+
+# Scheduler to start and stop tracking based on event timing
+def check_event_timing_and_track(event_id, mysql):
+	with app.app_context():
+		cursor = mysql.connection.cursor()
+		cursor.execute('SELECT event_date, start_time, end_time FROM events WHERE event_id = %s', (event_id,))
+		event = cursor.fetchone()
+
+		if not event:
+			print(f"Event ID {event_id} not found.")
+			return
+
+		event_date = event[0]
+		event_start_time = event[1]
+		event_end_time = event[2]
+
+		# Combine event date and start/end time into datetime objects
+		event_start_datetime = datetime.combine(event_date, event_start_time) - timedelta(minutes=30)  # 30 minutes before event
+		event_end_datetime = datetime.combine(event_date, event_end_time) + timedelta(minutes=30)  # 30 minutes after event
+
+		current_time = datetime.now()
+
+		# Calculate time to sleep until 30 minutes before the event starts
+		if current_time < event_start_datetime:
+			time_until_start = (event_start_datetime - current_time).total_seconds()
+			print(f"Waiting {time_until_start} seconds until tracking starts (30 minutes before event).")
+			time.sleep(time_until_start)  # Sleep until 30 minutes before event start time
+
+		# Start tracking 30 minutes before the event
+		print("Starting YOLO face tracking (30 minutes before event).")
+		run_yolo_face_tracking_webcam(event_id, mysql)
+
+		# Calculate time to sleep until 30 minutes after the event ends
+		time_until_end = (event_end_datetime - datetime.now()).total_seconds()
+
+		if time_until_end > 0:
+			print(f"Tracking for {time_until_end} seconds until tracking ends (30 minutes after event).")
+			time.sleep(time_until_end)
+
+		# Stop tracking 30 minutes after the event ends
+		print("Event is over. Stopping tracking (30 minutes after event).")
+		return
+
+# Function to start the tracking thread
+def start_tracking_thread(event_id, mysql):
+	tracking_thread = threading.Thread(target=check_event_timing_and_track, args=(event_id, mysql))
+	tracking_thread.start()
+
+run_yolo_face_tracking_webcam('9EHZc3fXFDqw', mysql)
+
+# ENDPOINTS
 @app.route('/signup', methods=['POST'])
 def signup():
 	try:
@@ -143,6 +307,9 @@ def register_event():
 		''', (event_id, event_name, event_date, start_time, end_time, location, organisation_id))
 		mysql.connection.commit()
 		cursor.close()
+
+		# Trigger tracking thread right after the event is created
+		start_tracking_thread('9EHZc3fXFDqw', mysql)
 		
 		return jsonify({'success': True, 'event_id': event_id}), 201
 
@@ -238,25 +405,48 @@ def add_invitee():
 		if event:
 			# Create event-specific folder for photos
 			event_folder = os.path.join(app.config['UPLOAD_FOLDER'], event_id)
+			cropped_faces_folder = os.path.join(event_folder, 'cropped_faces')
+
 			if not os.path.exists(event_folder):
-					os.makedirs(event_folder)
+				os.makedirs(event_folder)
+			if not os.path.exists(cropped_faces_folder):
+				os.makedirs(cropped_faces_folder)
 			
 			# Handle file upload for the invitee
 			photo = request.files.get('photo', None)  # Expecting a file input named 'photo'
 			if photo is None:
-					return jsonify({'error': 'No photo file part for invitee'}), 400
+					return jsonify({'error': 'No photo file for invitee'}), 400
 
 			filename = secure_filename(photo.filename)
-			unique_filename = str(uuid.uuid4()) + "_" + filename
-			photo_path = os.path.join(event_folder, unique_filename)  # Save to event folder
+			photo_filename = str(uuid.uuid4()) + "_" + filename
+			photo_path = os.path.join(event_folder, photo_filename)  # Save to event folder
 			photo.save(photo_path)
+
+			# Load the image for face detection
+			image = cv2.imread(photo_path)
+			gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+			# Detect faces
+			faces = face_cascade.detectMultiScale(gray_image, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+			if len(faces) == 0:
+				return jsonify({'error': 'No face detected in the image'}), 400
+
+			# Crop the face and save the cropped version
+			for (x, y, w, h) in faces:
+				# Crop the face
+				cropped_face = image[y:y+h, x:x+w]
+				cropped_filename = str(uuid.uuid4()) + "_cropped_" + filename
+				cropped_face_path = os.path.join(cropped_faces_folder, cropped_filename)
+
+				# Save the cropped face
+				cv2.imwrite(cropped_face_path, cropped_face)
 
 			# Insert invitee data into the database
 			cursor.execute('''
-				INSERT INTO invitees (invitee_id, name, phone_number, photo, event_id)
-				VALUES (%s, %s, %s, %s, %s)
+				INSERT INTO invitees (invitee_id, name, phone_number, photo, cropped_photo, event_id)
+				VALUES (%s, %s, %s, %s, %s, %s)
 				''', (
-					invitee_id, name, phone_number, unique_filename, event_id
+					invitee_id, name, phone_number, photo_filename, cropped_filename, event_id
 			))
 
 			mysql.connection.commit()
@@ -283,7 +473,7 @@ def delete_invitee():
 
 		# Check if the invitee exists
 		cursor = mysql.connection.cursor()
-		cursor.execute('SELECT photo, event_id FROM invitees WHERE invitee_id = %s', (invitee_id,))
+		cursor.execute('SELECT photo, cropped_photo, event_id FROM invitees WHERE invitee_id = %s', (invitee_id,))
 		invitee = cursor.fetchone()
 		
 		if invitee is None:
@@ -292,11 +482,15 @@ def delete_invitee():
 		
 		# Fetch the photo and event folder
 		photo_filename = invitee[0]
-		event_id = invitee[1]
+		cropped_filename = invitee[1]
+		event_id = invitee[2]
 
 		# Construct the path to the photo file
 		event_folder = os.path.join(app.config['UPLOAD_FOLDER'], event_id)
 		photo_path = os.path.join(event_folder, photo_filename)
+
+		cropped_face_folder = os.path.join(event_folder, 'cropped_faces')
+		cropped_face_path = os.path.join(cropped_face_folder, cropped_filename)
 		
 		# Delete the invitee from the database
 		cursor.execute('DELETE FROM invitees WHERE invitee_id = %s', (invitee_id,))
@@ -306,6 +500,8 @@ def delete_invitee():
 		# Delete the photo from the file system (if it exists)
 		if os.path.exists(photo_path):
 			os.remove(photo_path)
+		if os.path.exists(cropped_face_path):
+			os.remove(cropped_face_path)
 		
 		return jsonify({'message': 'Invitee deleted successfully'}), 200
 	
@@ -358,7 +554,8 @@ def get_attendees(event_id):
 	try:
 		cursor = mysql.connection.cursor()
 		query = '''
-		SELECT e.event_name,e.event_date, e.start_time, e.end_time, e.threshold, i.invitee_id, i.name, i.phone_number, i.photo, i.timestamps, i.isAttended
+		SELECT e.event_name, e.event_date, e.start_time, e.end_time, e.threshold, 
+			   i.invitee_id, i.name, i.phone_number, i.photo, i.timestamps, i.isAttended, i.isPresent
 		FROM events e
 		JOIN invitees i ON e.event_id = i.event_id
 		WHERE e.event_id = %s AND i.timestamps IS NOT NULL
@@ -386,7 +583,7 @@ def get_attendees(event_id):
 
 		total_seconds = event_end_time.total_seconds()
 		hours = int(total_seconds // 3600) % 24
-		minutes = int((total_seconds % 3600) // 60)
+		minutes = int((total_seconds % 3600) // 60) + 30
 		seconds = int(total_seconds % 60)
 
 		# Extract year, month, and day from event_date
@@ -442,15 +639,23 @@ def get_attendees(event_id):
 					'isAttended': attended  # Send calculated isAttended status to the frontend
 				}
 			else:
+				# Check if the attendee is currently at the event
+				if timestamps:
+					timestamps = json.loads(timestamps)
+					is_currently_present = len(timestamps['arrivals']) > len(timestamps['departures'])
+				else:
+					is_currently_present = False
+
+				# Add real-time status before the event ends
 				attendee_dict = {
 					'invitee_id': row[5],
 					'name': row[6],
 					'phone_number': row[7],
 					'photo': row[8],
 					'timestamps': row[9],
-					'isAttended': None  # Indicates that attendance hasn't been computed yet
+					'isAttended': None,  # Attendance not computed yet
+					'isPresent': is_currently_present  # True if attendee is currently at the event
 				}
-
 			attendee_list.append(attendee_dict)
 
 		return jsonify({
@@ -519,3 +724,58 @@ def download_attendance(event_id):
 
 if __name__ == "__main__":
 	app.run(debug=True,host="0.0.0.0", port=5000)
+
+
+
+# # Scheduler to start and stop tracking based on event timing
+# def check_event_timing_and_track(event_id, mysql):
+# 	while True:
+# 		cursor = mysql.connection.cursor()
+# 		cursor.execute('SELECT event_date, start_time, end_time FROM events WHERE event_id = %s', (event_id,))
+# 		event = cursor.fetchone()
+
+# 		if not event:
+# 			print(f"Event ID {event_id} not found.")
+# 			return
+
+# 		event_date = event[0]
+# 		event_start_time = event[1]
+# 		event_end_time = event[2]
+
+# 		end_total_seconds = event_end_time.total_seconds()
+# 		end_hours = int(end_total_seconds // 3600) % 24
+# 		end_minutes = int((end_total_seconds % 3600) // 60) + 30
+# 		end_seconds = int(end_total_seconds % 60)
+
+# 		start_total_seconds = event_start_time.total_seconds()
+# 		start_hours = int(start_total_seconds // 3600) % 24
+# 		start_minutes = int((start_total_seconds % 3600) // 60) - 30
+# 		start_seconds = int(start_total_seconds % 60)
+
+# 		# Extract year, month, and day from event_date
+# 		year = event_date.year
+# 		month = event_date.month
+# 		day = event_date.day
+
+# 		event_end_datetime = datetime(year=year, month=month, day=day, hour=end_hours, minute=end_minutes, second=end_seconds)
+# 		event_start_datetime = datetime(year=year, month=month, day=day, hour=start_hours, minute=start_minutes, second=start_seconds)
+		
+# 		current_time = datetime.now()
+
+# 		# time_before_start = start_time - timedelta(minutes=30)
+# 		# time_after_end = end_time + timedelta(minutes=30)
+
+# 		if event_start_datetime <= current_time <= event_end_datetime:
+# 			print("Starting YOLO face tracking.")
+# 			run_yolo_face_tracking_webcam(event_id, mysql)
+
+# 		if current_time > event_end_datetime:
+# 			print("Event is over. Stopping tracking.")
+# 			break
+
+# 		time.sleep(60)  # Check every minute
+
+# # Function to start the tracking thread
+# def start_tracking_thread(event_id, mysql):
+# 	tracking_thread = threading.Thread(target=check_event_timing_and_track, args=(event_id, mysql))
+# 	tracking_thread.start()

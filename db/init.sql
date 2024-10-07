@@ -26,8 +26,10 @@ CREATE TABLE invitees (
     name VARCHAR(255) NOT NULL,
     phone_number VARCHAR(20) NOT NULL,
     photo VARCHAR(255) NOT NULL,
+    cropped_photo VARCHAR(255) NOT NULL,
     timestamps JSON CHECK (JSON_VALID(timestamps)),
     isAttended BOOLEAN DEFAULT FALSE,
+    isPresent BOOLEAN DEFAULT FALSE,
     event_id VARCHAR(255),
     FOREIGN KEY (event_id) REFERENCES events(event_id) ON DELETE CASCADE
 );

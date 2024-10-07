@@ -7,3 +7,8 @@ export const generateUID = () => {
 	}
 	return uid;
 };
+
+export function padTime(time: string) {
+	const [hour, minute, second] = time.split(':');
+	return `${hour.padStart(2, '0')}:${minute}:${second || '00'}`; // Ensure seconds are included
+}
