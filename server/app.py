@@ -22,7 +22,8 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 
-app.config['MYSQL_HOST'] = 'db'
+# app.config['MYSQL_HOST'] = 'db'
+app.config['MYSQL_HOST'] = 'localhost'  # Change from 'db' to 'localhost'
 app.config['MYSQL_USER'] = 'root'
 app.config['MYSQL_PASSWORD'] = 'pass@word'
 app.config['MYSQL_DB'] = 'attendit_db'
@@ -209,7 +210,7 @@ def start_tracking_thread(event_id, mysql):
 	tracking_thread = threading.Thread(target=check_event_timing_and_track, args=(event_id, mysql))
 	tracking_thread.start()
 
-run_yolo_face_tracking_webcam('9EHZc3fXFDqw', mysql)
+run_yolo_face_tracking_webcam('1XVjREpEGgAj', mysql)
 
 # ENDPOINTS
 @app.route('/signup', methods=['POST'])
@@ -558,22 +559,26 @@ def get_attendees(event_id):
 			   i.invitee_id, i.name, i.phone_number, i.photo, i.timestamps, i.isAttended, i.isPresent
 		FROM events e
 		JOIN invitees i ON e.event_id = i.event_id
-		WHERE e.event_id = %s AND i.timestamps IS NOT NULL
+		WHERE e.event_id = %s
 		'''
 		cursor.execute(query, (event_id,))
 		results = cursor.fetchall()
 		cursor.close()
 
+		# if not results:
+		# 	# return jsonify({'error': 'Event not found or no attendees'}), 404
+		# 	# Return an empty list of attendees for an existing event with no timestamps
+		# 	return jsonify({
+		# 		'event_name': '',
+		# 		'attendees': [],
+		# 		'event_date': '',
+		# 		'event_end_time': '',
+		# 		'event_start_time': ''
+		# 	}), 200
+
 		if not results:
-			# return jsonify({'error': 'Event not found or no attendees'}), 404
-			# Return an empty list of attendees for an existing event with no timestamps
-			return jsonify({
-				'event_name': '',
-				'attendees': [],
-				'event_date': '',
-				'event_end_time': '',
-				'event_start_time': ''
-			}), 200
+			# Return a message if the event doesn't exist
+			return jsonify({'error': 'Event not found'}), 404
 
 		event_name = results[0][0]
 		event_date = results[0][1]
@@ -581,10 +586,27 @@ def get_attendees(event_id):
 		event_end_time = results[0][3]    # Fetch end time from DB (time object)
 		event_threshold = results[0][4]   # Fetch threshold (in minutes)
 
+		if not any(row[5] for row in results):
+			# If no invitees have timestamps (i.e., no attendees), return event details
+			return jsonify({
+					'event_name': event_name,
+					'attendees': [],
+					'event_date': event_date.strftime('%Y-%m-%d'),
+					'event_end_time': str(event_end_time),
+					'event_start_time': str(event_start_time)
+			}), 200
+
 		total_seconds = event_end_time.total_seconds()
 		hours = int(total_seconds // 3600) % 24
-		minutes = int((total_seconds % 3600) // 60) + 30
+		minutes = int((total_seconds % 3600) // 60)
 		seconds = int(total_seconds % 60)
+
+		# Add 30 minutes to event end time
+		minutes += 30
+		if minutes >= 60:
+				minutes -= 60
+				hours += 1
+				hours = hours % 24
 
 		# Extract year, month, and day from event_date
 		year = event_date.year
