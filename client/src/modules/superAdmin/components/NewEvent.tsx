@@ -58,7 +58,6 @@ const NewEvent = () => {
 				organisation_id: organisation.id,
 			})
 				.then((response) => {
-					console.log(response);
 					showToast({
 						title: 'New Event created.',
 						description: "We've created a new event for you.",

@@ -34,35 +34,5 @@ CREATE TABLE invitees (
     FOREIGN KEY (event_id) REFERENCES events(event_id) ON DELETE CASCADE
 );
 
--- INSERT INTO invitees (invitee_id, name, phone_number, photo, timestamps, isAttended, event_id)
--- VALUES (
---     'hW5lw9mTJz',
---     'Test Student',
---     '09089478390',
---     '6ad4e665-dd7e-4487-a0a5-b9064ee2b870_ai_face.png',
---     '{"arrivals": ["2:15:00", "2:35:00", "3:00:00"], "departures": ["2:30:00", "2:50:00", "3:30:00"]}',
---     1,
---     'O2hlzqv9225q'
--- );
 
--- INSERT INTO invitees (invitee_id, name, phone_number, photo, timestamps, isAttended, event_id)
--- VALUES (
---     'ty1tC4KYRC',
---     'Test Again',
---     '09088500394',
---     '11dea9ef-c913-4f68-9a87-d209b8b28de5_my_selfie.png',
---     '{"arrivals": ["2:30:00", "3:00:00"], "departures": ["2:45:00", "3:30:00"]}',
---     1,
---     'O2hlzqv9225q'
--- );
-
--- INSERT INTO invitees (invitee_id, name, phone_number, photo, timestamps, isAttended, event_id)
--- VALUES (
---     'ty9e64KYMn',
---     'Test Again',
---     '09088500394',
---     '11dea9ef-c913-4f68-9a87-d209b8b28de5_my_selfie.png',
---     '{"arrivals": ["2:30:00", "3:00:00"], "departures": ["2:45:00", "3:05:00"]}',
---     1,
---     'O2hlzqv9225q'
--- );
+-- To import mysqldump run `mysql -u username -p attendit_backup < attendit_backup.sql`

@@ -28,7 +28,7 @@ const EventPage = () => {
 				setInvitees(response.data.invitees);
 				setEventName(response.data.event_name);
 			} catch (error) {
-				console.log(error);
+				
 			}
 		};
 
