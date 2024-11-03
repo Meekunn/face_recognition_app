@@ -33,7 +33,7 @@ const EventsPage = () => {
 				const response = await Api.get(`get-events/${organisation.id}`);
 				setEvents(response.data);
 			} catch (error) {
-				console.log(error);
+				
 			}
 		};
 
@@ -52,7 +52,7 @@ const EventsPage = () => {
 				});
 				setEvents((prevEvents) => prevEvents.filter((event) => event.event_id !== selectedEventId));
 			} catch (error) {
-				console.log('There was an error deleting the event!', error);
+				
 				showToast({
 					title: 'Failed to delete event.',
 					description: 'There was an error deleting the event.',

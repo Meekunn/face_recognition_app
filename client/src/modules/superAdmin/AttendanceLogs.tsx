@@ -36,10 +36,10 @@ const AttendanceLogs = () => {
 	const currentDateTime = new Date();
 
 	const eventStarted = new Date(eventStartDateTime);
-	eventStarted.setMinutes(eventStarted.getMinutes() - 30);
+	eventStarted.setMinutes(eventStarted.getMinutes() - 5);
 
 	const eventEnded = new Date(eventEndDateTime);
-	eventEnded.setMinutes(eventEnded.getMinutes() + 30);
+	eventEnded.setMinutes(eventEnded.getMinutes() + 1);
 	// console.log(currentDateTime);
 	// console.log(eventEnded);
 	// console.log(currentDateTime > eventEnded);
@@ -50,7 +50,7 @@ const AttendanceLogs = () => {
 				const response = await Api.get(`get-events/${organisation.id}`);
 				setEvents(response.data);
 			} catch (error) {
-				console.log(error);
+				
 				showToast({
 					title: 'Error Occurred.',
 					description: 'An error occured while fetching events.',
@@ -68,11 +68,9 @@ const AttendanceLogs = () => {
 			const fetchAttendees = async () => {
 				try {
 					const response = await Api.get(`get-attendees/${selectedEvent}`);
-					console.log(response.data);
 					setAttendees(response.data.attendees);
 					setStartTime(response.data.event_start_time);
 					setSelectedEventName(response.data.event_name);
-					console.log('date', new Date(`${response.data.event_date}T${padTime(response.data.event_start_time)}`));
 					setEventStartDateTime(new Date(`${response.data.event_date}T${padTime(response.data.event_start_time)}`));
 					setEventEndDateTime(new Date(`${response.data.event_date}T${padTime(response.data.event_end_time)}`));
 				} catch (error) {
@@ -138,9 +136,11 @@ const AttendanceLogs = () => {
 				}
 				// After event ends, show 'isAttended'
 				else if (currentDateTime > eventEnded) {
-					return isAttended === null ? (
-						<Icon as={PiDotsThreeOutlineFill} color="brand.primary" w={6} h={6} /> // Three dots icon to signify loading
-					) : isAttended ? (
+					return isAttended ? 
+					// (
+					// 	<Icon as={PiDotsThreeOutlineFill} color="brand.primary" w={6} h={6} /> // Three dots icon to signify loading
+					// ) : isAttended ? 
+					(
 						<Icon as={FaCircleCheck} color="green.500" w={6} h={6} /> // Checkmark if attended more than 30 minutes
 					) : (
 						<Icon as={FaTimesCircle} color="red.500" w={6} h={6} /> // Red cross if attended less than 30 minutes
