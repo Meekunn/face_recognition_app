@@ -7,6 +7,8 @@ This project addresses the inefficiencies of traditional attendance systems by l
 - Event management, attendance tracking, and secure data export functionalities.
 
 The system achieved high accuracy during testing, with a mean Average Precision (mAP50) of 0.95 and a near-perfect recall rate, demonstrating reliability and adaptability in real-world applications.
+<br />
+Link to Thesis: [[OrofinAdedamola_Thesis](https://drive.google.com/file/d/1q1jNLJQbtsI5i14mQnLB9vSS6EPPqWCX/view?usp=sharing)]
 
 ## Steps to Clone the Repository
 1. Clone the repository:
